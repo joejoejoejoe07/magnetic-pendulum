@@ -128,65 +128,27 @@ function _renderLoop($0,regl,configureAxes,stack,drawField,h,b,$1,tolerance,inva
 }
 
 // PNG export functionality
-function _exportToPNG(exportButton, regl, stack, configureAxes, drawField, h, b, magnets, tolerance) {
+function _exportToPNG(exportButton, regl, stack) {
   exportButton.onclick = () => {
     try {
-      // Get the WebGL canvas from the stack
-      const canvas = stack.regl._gl.canvas;
+      // Get the WebGL canvas
+      const canvas = regl._gl.canvas;
       
-      console.log('Canvas dimensions:', canvas.width, 'x', canvas.height);
-      console.log('Canvas context:', canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
-      
-      // Force a render to ensure the canvas has content
-      configureAxes(stack.plot.scale("x"), stack.plot.scale("y"), () => {
-        regl.clear({ color: [0, 0, 0, 1] });
-        drawField({ h, b, magnets, tolerance });
-        
-        // Force WebGL to finish all pending operations
-        regl._gl.finish();
-        
-        // Try multiple approaches to capture the canvas
-        setTimeout(() => {
-          try {
-            // Method 1: Try toBlob first
-            canvas.toBlob((blob) => {
-              if (blob && blob.size > 0) {
-                console.log('Blob created successfully, size:', blob.size);
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `magnetic-pendulum-${Date.now()}.png`;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                URL.revokeObjectURL(url);
-              } else {
-                console.log('Blob failed, trying toDataURL');
-                // Method 2: Fallback to toDataURL
-                const dataURL = canvas.toDataURL('image/png');
-                if (dataURL && dataURL !== 'data:,') {
-                  const link = document.createElement('a');
-                  link.href = dataURL;
-                  link.download = `magnetic-pendulum-${Date.now()}.png`;
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                } else {
-                  alert('Failed to capture canvas content. The image may be blank due to WebGL security restrictions or rendering issues.');
-                }
-              }
-            }, 'image/png');
-            
-          } catch (error) {
-            console.error('Canvas capture failed:', error);
-            alert('Export failed: ' + error.message);
-          }
-        }, 100); // Small delay to ensure rendering completes
-      });
+      // Create a link element and trigger download
+      canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `magnetic-pendulum-${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }, 'image/png');
       
     } catch (error) {
-      console.error('Export preparation failed:', error);
-      alert('Export failed. Error: ' + error.message);
+      console.error('Export failed:', error);
+      alert('Export failed. Make sure the visualization has finished rendering.');
     }
   };
   
@@ -440,7 +402,7 @@ export default function define(runtime, observer) {
   main.variable(observer("mutable dirty")).define("mutable dirty", ["Mutable", "initial dirty"], (M, _) => new M(_));
   main.variable(observer("dirty")).define("dirty", ["mutable dirty"], _ => _.generator);
   main.variable(observer("renderLoop")).define("renderLoop", ["mutable dirty","regl","configureAxes","stack","drawField","h","b","mutable magnets","tolerance","invalidation"], _renderLoop);
-  main.variable(observer("exportToPNG")).define("exportToPNG", ["exportButton","regl","stack","configureAxes","drawField","h","b","magnets","tolerance"], _exportToPNG);
+  main.variable(observer("exportToPNG")).define("exportToPNG", ["exportButton","regl","stack"], _exportToPNG);
   main.variable(observer("drawField")).define("drawField", ["regl","steps"], _drawField);
   main.variable(observer("computeTrajectory")).define("computeTrajectory", ["magnets","h","b","opts","ode45"], _computeTrajectory);
   main.define("initial trajectoryStart", _trajectoryStart);
