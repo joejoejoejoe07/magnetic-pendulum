@@ -20,21 +20,31 @@ The biggest challenge is computing this in a performant manner since the pendulu
 For more information, see [The Magnetic Pendulum](https://chalkdustmagazine.com/features/the-magnetic-pendulum/) or [Gravity Fractals](https://www.youtube.com/watch?v=LavXSS5Xtbg&ab_channel=2swap).`
 )}
 
-// Add PNG export button
+// Improved PNG export button with better styling
 function _exportButton(html){return(
-html`<button style="padding: 10px 20px; margin: 10px 0; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">Export as PNG</button>`
+html`<div style="margin: 10px 0;">
+  <button id="exportBtn" style="padding: 12px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: all 0.2s ease;">
+    📸 Export as PNG
+  </button>
+  <div id="exportStatus" style="margin-top: 8px; font-size: 12px; color: #666;"></div>
+</div>`
 )}
 
 function _stack(elementStack,width,reglCanvas,Plot,d3){return(
 elementStack(this, {
-  width: width, //Math.min(width, 512),
-  height: width, //Math.floor(width * 0.7),
+  width: width,
+  height: width,
   layers: {
     regl: ({ current, width, height }) =>
       reglCanvas(current, {
         width,
         height,
-        attributes: { depthStencil: false, preserveDrawingBuffer: true } // Enable preserveDrawingBuffer for PNG export
+        attributes: { 
+          depthStencil: false, 
+          preserveDrawingBuffer: true,
+          premultipliedAlpha: false,
+          antialias: true
+        }
       }),
     plot: ({ width, height }) =>
       Plot.plot({
@@ -56,7 +66,6 @@ elementStack(this, {
 
 function _h(Inputs){return(
 Inputs.range([1e-3 * 0, 1], {
-  //transform: Math.log,
   label: "pendulum height, h",
   value: 0.5
 })
@@ -111,7 +120,7 @@ function _renderLoop($0,regl,configureAxes,stack,drawField,h,b,$1,tolerance,inva
     if (!$0.value) return;
     try {
       configureAxes(stack.plot.scale("x"), stack.plot.scale("y"), () => {
-        regl.clear({ color: [1, 0, 0, 1] });
+        regl.clear({ color: [0, 0, 0, 1] });
         drawField({ h, b, magnets: $1.value, tolerance });
       });
       $0.value = false;
@@ -127,28 +136,120 @@ function _renderLoop($0,regl,configureAxes,stack,drawField,h,b,$1,tolerance,inva
   });
 }
 
-// PNG export functionality
-function _exportToPNG(exportButton, regl, stack) {
-  exportButton.onclick = () => {
+// Improved PNG export functionality with better error handling and status updates
+function _exportToPNG(exportButton, regl, stack, configureAxes, drawField, h, b, magnets, tolerance) {
+  const button = exportButton.querySelector('#exportBtn');
+  const status = exportButton.querySelector('#exportStatus');
+  
+  const updateStatus = (message, isError = false) => {
+    status.textContent = message;
+    status.style.color = isError ? '#e74c3c' : '#27ae60';
+    if (!isError && message) {
+      setTimeout(() => {
+        status.textContent = '';
+      }, 3000);
+    }
+  };
+  
+  const setButtonState = (disabled, text) => {
+    button.disabled = disabled;
+    button.textContent = text;
+    button.style.opacity = disabled ? '0.6' : '1';
+    button.style.cursor = disabled ? 'not-allowed' : 'pointer';
+  };
+  
+  button.onclick = async () => {
     try {
-      // Get the WebGL canvas
-      const canvas = regl._gl.canvas;
+      setButtonState(true, '📸 Exporting...');
+      updateStatus('Preparing export...');
       
-      // Create a link element and trigger download
-      canvas.toBlob((blob) => {
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `magnetic-pendulum-${Date.now()}.png`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      }, 'image/png');
+      // Get the WebGL canvas
+      const canvas = stack.regl._gl.canvas;
+      const gl = stack.regl._gl;
+      
+      // Force a high-quality render
+      configureAxes(stack.plot.scale("x"), stack.plot.scale("y"), () => {
+        regl.clear({ color: [0, 0, 0, 1] });
+        drawField({ h, b, magnets, tolerance });
+      });
+      
+      // Ensure all WebGL operations complete
+      gl.finish();
+      
+      updateStatus('Capturing image...');
+      
+      // Create a new canvas for export to ensure proper format
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = canvas.width;
+      exportCanvas.height = canvas.height;
+      const ctx = exportCanvas.getContext('2d');
+      
+      // Method 1: Try to copy WebGL canvas to 2D canvas
+      try {
+        ctx.drawImage(canvas, 0, 0);
+        
+        // Test if the canvas has content by checking a pixel
+        const imageData = ctx.getImageData(0, 0, 1, 1);
+        const hasContent = imageData.data.some(value => value !== 0);
+        
+        if (hasContent) {
+          updateStatus('Downloading image...');
+          
+          // Convert to blob and download
+          exportCanvas.toBlob((blob) => {
+            if (blob && blob.size > 0) {
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = `magnetic-pendulum-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.png`;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              URL.revokeObjectURL(url);
+              
+              updateStatus('✅ Export successful!');
+              setButtonState(false, '📸 Export as PNG');
+            } else {
+              throw new Error('Generated blob is empty');
+            }
+          }, 'image/png', 1.0);
+          
+        } else {
+          throw new Error('Canvas appears to be blank');
+        }
+        
+      } catch (drawError) {
+        console.warn('Canvas copy method failed:', drawError);
+        
+        // Method 2: Direct WebGL canvas export as fallback
+        updateStatus('Trying alternative method...');
+        
+        const dataURL = canvas.toDataURL('image/png', 1.0);
+        
+        if (dataURL && dataURL.startsWith('data:image/png')) {
+          const link = document.createElement('a');
+          link.href = dataURL;
+          link.download = `magnetic-pendulum-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.png`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+          updateStatus('✅ Export successful! (fallback method)');
+          setButtonState(false, '📸 Export as PNG');
+        } else {
+          throw new Error('Both export methods failed');
+        }
+      }
       
     } catch (error) {
       console.error('Export failed:', error);
-      alert('Export failed. Make sure the visualization has finished rendering.');
+      updateStatus(`❌ Export failed: ${error.message}`, true);
+      setButtonState(false, '📸 Export as PNG');
+      
+      // Show additional troubleshooting info
+      setTimeout(() => {
+        updateStatus('💡 Tip: Try adjusting parameters and waiting for the visualization to fully render before exporting', true);
+      }, 1000);
     }
   };
   
@@ -184,9 +285,6 @@ regl({
       vec2 force = r0 / (d0 * d0 * sqrt(d0)) + 
                    r1 / (d1 * d1 * sqrt(d1)) +
                    r2 / (d2 * d2 * sqrt(d2));
-      // Derivative of first two components (pos) is vel
-      // Derivative of second two components (vel) is accel,
-      // which comes from putting everything on RHS of the ODE
       return vec4(vel, force - b * vel - pos);
     }
 
@@ -195,7 +293,6 @@ regl({
     const float maxIncrease = 50.0;
 
     vec4 rk45 (vec4 y, inout float dt) { 
-      // Fifth order estimate using constants for the Cash-Karp method
       vec4 k1 = deriv(y);
       vec4 k2 = deriv(y + dt * 0.2 * k1);
       vec4 k3 = deriv(y + dt * (0.075 * k1 + 0.225 * k2));
@@ -203,15 +300,12 @@ regl({
       vec4 k5 = deriv(y + dt * (-0.203703703703703703 * k1 + 2.5 * k2 - 2.592592592592592592 * k3 + 1.296296296296296296 * k4));
       vec4 k6 = deriv(y + dt * (0.029495804398148148 * k1 + 0.341796875 * k2 + 0.041594328703703703 * k3 + 0.400345413773148148 * k4 + 0.061767578125 * k5));
 
-      // Estimate the error using the embedded fourth order method
       vec4 tmp = dt * (0.004293774801587301 * k1 - 0.018668586093857832 * k3 + 0.034155026830808080 * k4 + 0.019321986607142857 * k5 - 0.039102202145680406 * k6);
       float err2 = dot(tmp, tmp);
 
-      // Wasteful, but only accept the step if error is within tolerance
       bool accept = err2 <= tol2;
       if (accept) y += dt * (0.097883597883597883 * k1 + 0.402576489533011272 * k3 + 0.210437710437710437 * k4 + 0.289102202145680406 * k6);
 
-      // Either way, adjust dt according to the estimate
       dt *= clamp(safety * pow(tol2 / err2, accept ? 0.125 : 0.1), maxDecrease, maxIncrease);
 
       return y;
@@ -229,9 +323,6 @@ regl({
       float w0 = 1.0 / dot(r0, r0);
       float w1 = 1.0 / dot(r1, r1);
       float w2 = 1.0 / dot(r2, r2);
-
-      // Alternatively, don't weight and return the nearest
-      // return w0 > w1 ? (w2 > w0 ? col2 : col0) : (w2 > w1 ? col2 : col1);
 
       return (w0 * col0 + w1 * col1 + w2 * col2) / (w0 + w1 + w2);
     }
@@ -312,7 +403,6 @@ function _drawSVGLayer(stack,d3,$0,trajectory,magnets,$1,$2)
       yScale.invert(event.offsetY)
     ];
   });
-  //window.addEventListener("mouseout", () => (mutable trajectoryStart = null));
 
   const makeline = d3
     .line()
@@ -402,14 +492,14 @@ export default function define(runtime, observer) {
   main.variable(observer("mutable dirty")).define("mutable dirty", ["Mutable", "initial dirty"], (M, _) => new M(_));
   main.variable(observer("dirty")).define("dirty", ["mutable dirty"], _ => _.generator);
   main.variable(observer("renderLoop")).define("renderLoop", ["mutable dirty","regl","configureAxes","stack","drawField","h","b","mutable magnets","tolerance","invalidation"], _renderLoop);
-  main.variable(observer("exportToPNG")).define("exportToPNG", ["exportButton","regl","stack"], _exportToPNG);
+  main.variable(observer("exportToPNG")).define("exportToPNG", ["exportButton","regl","stack","configureAxes","drawField","h","b","magnets","tolerance"], _exportToPNG);
   main.variable(observer("drawField")).define("drawField", ["regl","steps"], _drawField);
   main.variable(observer("computeTrajectory")).define("computeTrajectory", ["magnets","h","b","opts","ode45"], _computeTrajectory);
   main.define("initial trajectoryStart", _trajectoryStart);
   main.variable(observer("mutable trajectoryStart")).define("mutable trajectoryStart", ["Mutable", "initial trajectoryStart"], (M, _) => new M(_));
   main.variable(observer("trajectoryStart")).define("trajectoryStart", ["mutable trajectoryStart"], _ => _.generator);
   main.define("initial trajectory", ["computeTrajectory","trajectoryStart"], _trajectory);
-  main.variable(observer("mutable trajectory")).define("mutable trajectory", ["Mutable", "initial trajectory"], (M, _) => new M(_));
+  main.variable(observer("mutable trajectory")).define("mutable trajectory", ["Mutable", "initial trajectory"], (M, _) => G.input(_));
   main.variable(observer("trajectory")).define("trajectory", ["mutable trajectory"], _ => _.generator);
   main.variable(observer("drawSVGLayer")).define("drawSVGLayer", ["stack","d3","mutable trajectoryStart","trajectory","magnets","mutable magnets","mutable dirty"], _drawSVGLayer);
   main.variable(observer("configureAxes")).define("configureAxes", ["createAxisConfiguration","regl"], _configureAxes);
